@@ -346,7 +346,7 @@
         userinfo_endpoint:    'http://localhost:7000/realms/dpop-test/protocol/openid-connect/userinfo',
         end_session_endpoint: 'http://localhost:7000/realms/dpop-test/protocol/openid-connect/logout',
         client_id:            'dpop-client',   // ← change to your Keycloak client ID
-        redirect_uri:         'http://localhost:5005/',
+        redirect_uri:         'http://localhost:5005',
         scope:                'openid profile email',
     };
 
@@ -409,7 +409,7 @@
         return _dpopKeyPair;
     }
 
-    async function createDpopProof(htm, htu) {
+    async function createDpopProof(htm, htu,accessToken) {
         const { privateKey, jwkPub } = await getDpopKeyPair();
 
         const header = { typ: 'dpop+jwt', alg: 'ES256', jwk: jwkPub };
@@ -419,7 +419,129 @@
             htu,
             iat: Math.floor(Date.now() / 1000),
         };
+        /*
+        For resource server requests, RFC 9449 requires:
 
+        {
+          "jti": "...",
+          "htm": "GET",
+          "htu": "http://localhost:8080/api/account",
+          "iat": 1717000000,
+          "ath": "..."
+        }
+
+        The ath value is the base64url-encoded SHA-256 hash of the access token.
+        Now the proof is cryptographically tied to the exact access token being used.
+
+        The resource server performs:
+
+        1. Read access token
+        2. Compute SHA256(access_token)
+        3. Compare with ath
+        4. Verify DPoP signature
+        5. Verify cnf.jkt matches DPoP key
+        Why Keycloak token endpoint didn't require ath
+
+        When exchanging the authorization code:
+
+        POST /token
+        DPoP: <proof>
+
+        there is no access token yet.
+
+        You are asking Keycloak to create one.
+
+        So there is nothing to hash.
+
+        RFC DPoP therefore says:
+
+        Token endpoint
+        {
+          "jti": "...",
+          "htm": "POST",
+          "htu": "https://idp/token",
+          "iat": 123456
+        }
+
+        No ath.
+        If you're using a normal Bearer token flow:
+
+        Authorization: Bearer eyJ...
+
+        there is:
+
+        No DPoP header
+        No DPoP proof JWT
+        No ath claim
+        No proof-of-possession validation
+
+        The resource server only validates the access token:
+
+        1. Verify JWT signature
+        2. Verify issuer
+        3. Verify audience
+        4. Verify expiration
+        5. Verify scopes/roles
+
+        That's all.
+
+        With DPoP:
+
+        Authorization: DPoP eyJ...
+        DPoP: eyJ...
+
+        the resource server performs additional checks:
+
+        1. Validate access token
+        2. Validate DPoP proof signature
+        3. Validate htm
+        4. Validate htu
+        5. Validate iat
+        6. Validate jti replay protection
+        7. Validate ath
+        8. Validate cnf.jkt
+
+        The ath claim exists only because DPoP is being used.
+
+        It's not a Spring Boot-specific requirement.
+
+        ath is required by the DPoP specification (RFC 9449) for resource requests.
+
+        So any resource server that correctly implements DPoP should require it.
+
+        Spring Boot
+
+        Spring Security's DPoP implementation follows the RFC, so it rejects:
+
+        ath claim is required
+
+        because the spec says the proof for a protected resource request must contain ath.
+
+        FastAPI
+
+        If you implement DPoP validation correctly in FastAPI, it must also require ath.
+
+        Example validation flow:
+
+        1. Read Authorization: DPoP <access_token>
+        2. Read DPoP header
+        3. Verify DPoP JWT signature
+        4. Verify htm
+        5. Verify htu
+        6. Verify iat
+        7. Verify ath
+        8. Verify cnf.jkt
+
+        The ath step is still required.
+         */
+        if (accessToken) {
+            const digest = await crypto.subtle.digest(
+                'SHA-256',
+                new TextEncoder().encode(accessToken)
+            );
+
+            payload.ath = b64url(digest);
+        }
         const enc = txt => b64url(new TextEncoder().encode(txt));
         const sigInput = `${enc(JSON.stringify(header))}.${enc(JSON.stringify(payload))}`;
 
@@ -437,7 +559,10 @@
     ═══════════════════════════════════════════════ */
     async function startLogin() {
         setStatus('Generating PKCE…', 'info');
-
+        console.log("PAGE LOAD");
+        console.log("Current URL:", window.location.href);
+        console.log("oauth_state:", sessionStorage.getItem("oauth_state"));
+        console.log("pkce_verifier:", sessionStorage.getItem("pkce_verifier"));
         const { verifier, challenge } = await generatePKCE();
         const state = randomState();
         await getDpopKeyPair(); // pre-generate key
@@ -454,7 +579,21 @@
             code_challenge:        challenge,
             code_challenge_method: 'S256',
         });
+        console.log("Saving state:", state);
+        console.log("Saving verifier:", verifier);
 
+        sessionStorage.setItem('oauth_state', state);
+        sessionStorage.setItem('pkce_verifier', verifier);
+
+        console.log(
+            "After save state:",
+            sessionStorage.getItem('oauth_state')
+        );
+
+        console.log(
+            "After save verifier:",
+            sessionStorage.getItem('pkce_verifier')
+        );
         window.location.href = `${CONFIG.authorization_endpoint}?${params}`;
     }
 
@@ -463,14 +602,26 @@
 
         const storedState   = sessionStorage.getItem('oauth_state');
         const codeVerifier  = sessionStorage.getItem('pkce_verifier');
-
+        console.log("===== CALLBACK DEBUG =====");
+        console.log("storedState =", storedState);
+        console.log("returnedState =", returnedState);
+        console.log("codeVerifier =", codeVerifier);
+        console.log("url =", window.location.href);
+        console.log("==========================");
         if (storedState !== returnedState) {
             setStatus('State mismatch — possible CSRF.', 'error');
             return;
         }
 
         const dpopProof = await createDpopProof('POST', CONFIG.token_endpoint);
+        const parts = dpopProof.split('.');
+        const header  = JSON.parse(atob(parts[0].replace(/-/g,'+').replace(/_/g,'/')));
+        const payload = JSON.parse(atob(parts[1].replace(/-/g,'+').replace(/_/g,'/')));
 
+        console.log('proof header jwk:', JSON.stringify(header.jwk));
+        console.log('proof payload htu:', payload.htu);
+        console.log('proof payload htm:', payload.htm);
+        console.log('proof payload iat:', new Date(payload.iat * 1000).toISOString());
         const body = new URLSearchParams({
             grant_type:    'authorization_code',
             code,
@@ -615,6 +766,12 @@
           <span class="token-val">${stored.stored_at}</span>
         </div>
       </div>
+      <div class="token-box" id="api-result" style="min-height:60px">
+        — no request made yet to resource server —
+        </div>
+      <button class="btn btn-primary" onclick="getAccount()" style="margin-bottom:10px">
+        Get Account
+        </button>
       <button class="btn btn-secondary" onclick="logout()">Sign out</button>
     </div>
   `;
@@ -656,29 +813,115 @@
     /* ═══════════════════════════════════════════════
    DPoP-BOUND API CALLER
 ═══════════════════════════════════════════════ */
-    async function dpopFetch(url, options = {}) {
-        // 1. Load tokens from localStorage
+    async function refreshAccessToken() {
         const stored = JSON.parse(localStorage.getItem('auth_tokens'));
+        if (!stored?.refresh_token) throw new Error('No refresh token — re-login required');
+
+        // Fresh DPoP proof for the token endpoint
+        const dpopProof = await createDpopProof('POST',
+            'http://localhost:7000/realms/dpop-test/protocol/openid-connect/token');
+
+        const body = new URLSearchParams({
+            grant_type:    'refresh_token',
+            refresh_token: stored.refresh_token,
+            client_id:     'dpop-client',
+        });
+
+        const resp = await fetch(
+            'http://localhost:7000/realms/dpop-test/protocol/openid-connect/token',
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'DPoP': dpopProof,
+                },
+                body,
+            }
+        );
+
+        if (!resp.ok) {
+            // Refresh token also expired — force re-login
+            localStorage.removeItem('auth_tokens');
+            window.location.href = '/';
+            throw new Error('Session expired — redirecting to login');
+        }
+
+        const tokens = await resp.json();
+        const { jwkPub } = await getDpopKeyPair();
+
+        // Overwrite stored tokens with fresh ones
+        const updated = {
+            access_token:  tokens.access_token,
+            refresh_token: tokens.refresh_token || stored.refresh_token,
+            id_token:      tokens.id_token      || stored.id_token,
+            token_type:    tokens.token_type,
+            expires_in:    tokens.expires_in,
+            dpop_jwk:      jwkPub,
+            stored_at:     new Date().toISOString(),
+        };
+        localStorage.setItem('auth_tokens', JSON.stringify(updated));
+        return updated;
+    }
+
+    function isTokenExpired(stored) {
+        if (!stored?.stored_at || !stored?.expires_in) return true;
+        const storedAt = new Date(stored.stored_at).getTime();
+        const expiresAt = storedAt + (stored.expires_in * 1000);
+        // Refresh 30 seconds before actual expiry
+        return Date.now() > expiresAt - 30_000;
+    }
+
+    async function dpopFetch(url, options = {}) {
+        let stored = JSON.parse(localStorage.getItem('auth_tokens'));
         if (!stored?.access_token) throw new Error('Not authenticated');
 
-        // 2. Generate fresh DPoP proof for THIS request
-        const method = (options.method || 'GET').toUpperCase();
-        const dpopProof = await createDpopProof(method, url);  // already in your code
+        // Auto-refresh if token is expired or about to expire
+        if (isTokenExpired(stored)) {
+            console.log('Token expired — refreshing...');
+            stored = await refreshAccessToken();
+        }
 
-        // 3. Build headers
+        const method = (options.method || 'GET').toUpperCase();
+        const htuUrl = url.split('?')[0].replace(/\/$/, '');
+        const dpopProof = await createDpopProof(method, htuUrl,stored.access_token);
+
         const headers = {
             ...options.headers,
             'Authorization': `DPoP ${stored.access_token}`,
             'DPoP': dpopProof,
             'Content-Type': 'application/json',
         };
+        console.log("========== REQUEST ==========");
+        console.log("URL:", url);
+        console.log("Method:", method);
 
-        // 4. Fire the request
+        console.log("Headers:");
+        Object.entries(headers).forEach(([k, v]) => {
+            console.log(`${k}:`, v);
+        });
+
+        const dpopParts = dpopProof.split('.');
+
+        console.log("DPoP Header:");
+        console.log(
+            JSON.parse(atob(dpopParts[0].replace(/-/g, '+').replace(/_/g, '/')))
+        );
+
+        console.log("DPoP Payload:");
+        console.log(
+            JSON.parse(atob(dpopParts[1].replace(/-/g, '+').replace(/_/g, '/')))
+        );
+
+        console.log("Access Token:");
+        console.log(stored.access_token);
+
+        console.log("============================");
         const resp = await fetch(url, { ...options, method, headers });
 
-        if (resp.status === 401) throw new Error('Unauthorized — token expired or invalid');
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-
+        if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}));
+            throw new Error(body.reason || body.message || `HTTP ${resp.status}`);
+        }
         return resp.json();
     }
     async function getAccount() {
@@ -698,6 +941,14 @@
         } catch (err) {
             setStatus(`Error: ${err.message}`, 'error');
         }
+    }
+    function showApiResult(data) {
+        const box = document.getElementById('api-result');
+        if (box) box.innerHTML = `
+    <div class="token-row">
+      <span class="token-key">Response</span>
+      <span class="token-val">${JSON.stringify(data, null, 2)}</span>
+    </div>`;
     }
     /*
     What goes over the wire

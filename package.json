@@ -1,6 +1,6 @@
 {
   "scripts": {
-  "start": "live-server dpop-pkce.html --port=5005"
+ "start": "live-server dpop-pkce.html --host=localhost --port=5005"
 },
   "devDependencies": {
     "live-server": "^1.2.2"
