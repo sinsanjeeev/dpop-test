@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DPoP Auth</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Syne:wght@400;700;800&display=swap');
+
+        :root {
+            --bg: #0a0a0f;
+            --surface: #111118;
+            --border: #1e1e2e;
+            --accent: #7c3aed;
+            --accent2: #06b6d4;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --success: #10b981;
+            --error: #ef4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* Animated grid background */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                    linear-gradient(rgba(124,58,237,0.04) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(124,58,237,0.04) 1px, transparent 1px);
+            background-size: 40px 40px;
+            animation: gridPulse 8s ease-in-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes gridPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        /* Glow orbs */
+        .orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(80px);
+            pointer-events: none;
+            animation: orbFloat 12s ease-in-out infinite;
+        }
+        .orb1 {
+            width: 400px; height: 400px;
+            background: rgba(124,58,237,0.12);
+            top: -100px; left: -100px;
+            animation-delay: 0s;
+        }
+        .orb2 {
+            width: 350px; height: 350px;
+            background: rgba(6,182,212,0.08);
+            bottom: -80px; right: -80px;
+            animation-delay: -6s;
+        }
+
+        @keyframes orbFloat {
+            0%, 100% { transform: translate(0,0) scale(1); }
+            33% { transform: translate(30px,-20px) scale(1.05); }
+            66% { transform: translate(-20px,30px) scale(0.95); }
+        }
+
+        .card {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            max-width: 520px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 48px;
+            box-shadow:
+                    0 0 0 1px rgba(124,58,237,0.1),
+                    0 24px 64px rgba(0,0,0,0.5),
+                    inset 0 1px 0 rgba(255,255,255,0.05);
+            animation: cardIn 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        @keyframes cardIn {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(124,58,237,0.15);
+            border: 1px solid rgba(124,58,237,0.3);
+            border-radius: 999px;
+            padding: 4px 12px;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #a78bfa;
+            margin-bottom: 24px;
+        }
+
+        .badge-dot {
+            width: 6px; height: 6px;
+            background: #7c3aed;
+            border-radius: 50%;
+            animation: blink 2s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; box-shadow: 0 0 6px #7c3aed; }
+            50% { opacity: 0.4; box-shadow: none; }
+        }
+
+        h1 {
+            font-family: 'Syne', sans-serif;
+            font-size: 32px;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            line-height: 1.1;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #e2e8f0 0%, #a78bfa 60%, #06b6d4 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 36px;
+            line-height: 1.6;
+        }
+
+        .spec-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 32px;
+        }
+
+        .spec-item {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .spec-label {
+            font-size: 9px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            margin-bottom: 4px;
+        }
+
+        .spec-value {
+            font-size: 11px;
+            color: var(--accent2);
+            font-weight: 700;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 10px;
+            font-family: 'Syne', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            color: white;
+            box-shadow: 0 4px 20px rgba(124,58,237,0.35);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 32px rgba(124,58,237,0.5);
+        }
+
+        .btn-primary:active { transform: translateY(0); }
+
+        .btn-primary::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .btn-primary:hover::after { opacity: 1; }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--border);
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        /* ── STATUS / SUCCESS STATES ── */
+        #status {
+            margin-top: 20px;
+            font-size: 12px;
+            color: var(--muted);
+            min-height: 18px;
+            transition: color 0.3s;
+        }
+
+        #status.error { color: var(--error); }
+        #status.info  { color: var(--accent2); }
+
+        /* Hello screen */
+        .hello-wrap {
+            text-align: center;
+        }
+
+        .hello-title {
+            font-family: 'Syne', sans-serif;
+            font-size: 56px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #10b981, #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.03em;
+            animation: helloIn 0.8s cubic-bezier(0.16,1,0.3,1) forwards;
+            opacity: 0;
+            transform: scale(0.8);
+        }
+
+        @keyframes helloIn {
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .hello-sub {
+            color: var(--muted);
+            font-size: 12px;
+            margin: 12px 0 32px;
+        }
+
+        .token-box {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            font-size: 10px;
+            color: var(--muted);
+            text-align: left;
+            word-break: break-all;
+            line-height: 1.7;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+        }
+
+        .token-box::-webkit-scrollbar { width: 4px; }
+        .token-box::-webkit-scrollbar-track { background: transparent; }
+        .token-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+
+        .token-row { margin-bottom: 8px; }
+        .token-key {
+            color: #a78bfa;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            display: block;
+            margin-bottom: 2px;
+        }
+        .token-val { color: var(--accent2); }
+
+        .pill-row {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+        }
+
+        .pill {
+            background: rgba(16,185,129,0.12);
+            border: 1px solid rgba(16,185,129,0.25);
+            color: #34d399;
+            border-radius: 999px;
+            padding: 4px 12px;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+        }
+
+        /* Loader */
+        .spinner {
+            display: inline-block;
+            width: 14px; height: 14px;
+            border: 2px solid rgba(124,58,237,0.3);
+            border-top-color: #7c3aed;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="orb orb1"></div>
+<div class="orb orb2"></div>
+
+<div class="card" id="app"></div>
+
+<script>
+    /* ═══════════════════════════════════════════════
+       CONFIG
+    ═══════════════════════════════════════════════ */
+    const CONFIG = {
+        issuer:               'http://localhost:7000/realms/dpop-test',
+        authorization_endpoint: 'http://localhost:7000/realms/dpop-test/protocol/openid-connect/auth',
+        token_endpoint:       'http://localhost:7000/realms/dpop-test/protocol/openid-connect/token',
+        userinfo_endpoint:    'http://localhost:7000/realms/dpop-test/protocol/openid-connect/userinfo',
+        end_session_endpoint: 'http://localhost:7000/realms/dpop-test/protocol/openid-connect/logout',
+        client_id:            'dpop-client',   // ← change to your Keycloak client ID
+        redirect_uri:         'http://localhost:5005/',
+        scope:                'openid profile email',
+    };
+
+    /* ═══════════════════════════════════════════════
+       CRYPTO HELPERS
+    ═══════════════════════════════════════════════ */
+    const b64url = buf =>
+        btoa(String.fromCharCode(...new Uint8Array(buf)))
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+    async function generatePKCE() {
+        const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+        const challenge = b64url(
+            await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+        );
+        return { verifier, challenge };
+    }
+
+    function randomState() {
+        return b64url(crypto.getRandomValues(new Uint8Array(16)));
+    }
+
+    /* ═══════════════════════════════════════════════
+       DPoP KEY + PROOF
+    ═══════════════════════════════════════════════ */
+    let _dpopKeyPair = null;
+
+    async function getDpopKeyPair() {
+        if (_dpopKeyPair) return _dpopKeyPair;
+
+        // Restore from sessionStorage if possible
+        const stored = sessionStorage.getItem('dpop_jwk_private');
+        if (stored) {
+            try {
+                const jwkPriv = JSON.parse(stored);
+                const jwkPub  = JSON.parse(sessionStorage.getItem('dpop_jwk_public'));
+                const privateKey = await crypto.subtle.importKey(
+                    'jwk', jwkPriv, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']
+                );
+                const publicKey = await crypto.subtle.importKey(
+                    'jwk', jwkPub, { name: 'ECDSA', namedCurve: 'P-256' }, true, []
+                );
+                _dpopKeyPair = { privateKey, publicKey, jwkPub };
+                return _dpopKeyPair;
+            } catch(e) { /* regenerate */ }
+        }
+
+        const pair = await crypto.subtle.generateKey(
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['sign', 'verify']
+        );
+        const jwkPub  = await crypto.subtle.exportKey('jwk', pair.publicKey);
+        const jwkPriv = await crypto.subtle.exportKey('jwk', pair.privateKey);
+
+        sessionStorage.setItem('dpop_jwk_public',  JSON.stringify(jwkPub));
+        sessionStorage.setItem('dpop_jwk_private', JSON.stringify(jwkPriv));
+
+        _dpopKeyPair = { privateKey: pair.privateKey, publicKey: pair.publicKey, jwkPub };
+        return _dpopKeyPair;
+    }
+
+    async function createDpopProof(htm, htu) {
+        const { privateKey, jwkPub } = await getDpopKeyPair();
+
+        const header = { typ: 'dpop+jwt', alg: 'ES256', jwk: jwkPub };
+        const payload = {
+            jti: b64url(crypto.getRandomValues(new Uint8Array(16))),
+            htm,
+            htu,
+            iat: Math.floor(Date.now() / 1000),
+        };
+
+        const enc = txt => b64url(new TextEncoder().encode(txt));
+        const sigInput = `${enc(JSON.stringify(header))}.${enc(JSON.stringify(payload))}`;
+
+        const sig = await crypto.subtle.sign(
+            { name: 'ECDSA', hash: 'SHA-256' },
+            privateKey,
+            new TextEncoder().encode(sigInput)
+        );
+
+        return `${sigInput}.${b64url(sig)}`;
+    }
+
+    /* ═══════════════════════════════════════════════
+       AUTH FLOW
+    ═══════════════════════════════════════════════ */
+    async function startLogin() {
+        setStatus('Generating PKCE…', 'info');
+
+        const { verifier, challenge } = await generatePKCE();
+        const state = randomState();
+        await getDpopKeyPair(); // pre-generate key
+
+        sessionStorage.setItem('pkce_verifier', verifier);
+        sessionStorage.setItem('oauth_state',   state);
+
+        const params = new URLSearchParams({
+            response_type:         'code',
+            client_id:             CONFIG.client_id,
+            redirect_uri:          CONFIG.redirect_uri,
+            scope:                 CONFIG.scope,
+            state,
+            code_challenge:        challenge,
+            code_challenge_method: 'S256',
+        });
+
+        window.location.href = `${CONFIG.authorization_endpoint}?${params}`;
+    }
+
+    async function handleCallback(code, returnedState) {
+        setStatus('<span class="spinner"></span>Exchanging code…', 'info');
+
+        const storedState   = sessionStorage.getItem('oauth_state');
+        const codeVerifier  = sessionStorage.getItem('pkce_verifier');
+
+        if (storedState !== returnedState) {
+            setStatus('State mismatch — possible CSRF.', 'error');
+            return;
+        }
+
+        const dpopProof = await createDpopProof('POST', CONFIG.token_endpoint);
+
+        const body = new URLSearchParams({
+            grant_type:    'authorization_code',
+            code,
+            redirect_uri:  CONFIG.redirect_uri,
+            client_id:     CONFIG.client_id,
+            code_verifier: codeVerifier,
+        });
+
+        let resp;
+        try {
+            resp = await fetch(CONFIG.token_endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'DPoP': dpopProof,
+                },
+                body,
+            });
+        } catch (err) {
+            setStatus(`Network error: ${err.message}`, 'error');
+            return;
+        }
+
+        if (!resp.ok) {
+            const txt = await resp.text();
+            setStatus(`Token error ${resp.status}: ${txt}`, 'error');
+            return;
+        }
+
+        const tokens = await resp.json();
+        const { jwkPub } = await getDpopKeyPair();
+
+        // Store tokens + DPoP public JWK in localStorage
+        const stored = {
+            access_token:  tokens.access_token,
+            refresh_token: tokens.refresh_token  || null,
+            id_token:      tokens.id_token       || null,
+            token_type:    tokens.token_type,
+            expires_in:    tokens.expires_in,
+            dpop_jwk:      jwkPub,
+            stored_at:     new Date().toISOString(),
+        };
+        localStorage.setItem('auth_tokens', JSON.stringify(stored));
+
+        // Clean URL
+        history.replaceState({}, '', '/');
+        sessionStorage.removeItem('pkce_verifier');
+        sessionStorage.removeItem('oauth_state');
+
+        renderHello(stored);
+    }
+
+    function logout() {
+        localStorage.removeItem('auth_tokens');
+        sessionStorage.clear();
+        const params = new URLSearchParams({
+            client_id:    CONFIG.client_id,
+            post_logout_redirect_uri: CONFIG.redirect_uri,
+        });
+        window.location.href = `${CONFIG.end_session_endpoint}?${params}`;
+    }
+
+    /* ═══════════════════════════════════════════════
+       RENDER
+    ═══════════════════════════════════════════════ */
+    function setStatus(html, type = '') {
+        const el = document.getElementById('status');
+        if (el) { el.innerHTML = html; el.className = type; }
+    }
+
+    function truncate(str, n = 48) {
+        return str && str.length > n ? str.slice(0, n) + '…' : str;
+    }
+
+    function renderLogin() {
+        document.getElementById('app').innerHTML = `
+    <div class="badge"><span class="badge-dot"></span>PKCE + DPoP Auth</div>
+    <h1>Secure<br>Login</h1>
+    <p class="subtitle">
+      Authenticates via Keycloak using PKCE flow with<br>
+      DPoP proof-of-possession token binding.
+    </p>
+    <div class="spec-grid">
+      <div class="spec-item">
+        <div class="spec-label">Flow</div>
+        <div class="spec-value">Auth Code + PKCE</div>
+      </div>
+      <div class="spec-item">
+        <div class="spec-label">Token Binding</div>
+        <div class="spec-value">DPoP / ES256</div>
+      </div>
+      <div class="spec-item">
+        <div class="spec-label">IdP Port</div>
+        <div class="spec-value">:7000</div>
+      </div>
+      <div class="spec-item">
+        <div class="spec-label">App Port</div>
+        <div class="spec-value">:5005</div>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="startLogin()">
+      ⚡ Login with Keycloak
+    </button>
+    <div id="status"></div>
+  `;
+    }
+
+    function renderHello(stored) {
+        document.getElementById('app').innerHTML = `
+    <div class="hello-wrap">
+      <div class="hello-title">Hello! 👋</div>
+      <p class="hello-sub">Successfully authenticated with DPoP token binding</p>
+      <div class="pill-row">
+        <span class="pill">✓ PKCE verified</span>
+        <span class="pill">✓ DPoP bound</span>
+        <span class="pill">✓ Stored locally</span>
+      </div>
+      <div class="token-box">
+        <div class="token-row">
+          <span class="token-key">access_token</span>
+          <span class="token-val">${truncate(stored.access_token)}</span>
+        </div>
+        ${stored.refresh_token ? `
+        <div class="token-row">
+          <span class="token-key">refresh_token</span>
+          <span class="token-val">${truncate(stored.refresh_token)}</span>
+        </div>` : ''}
+        <div class="token-row">
+          <span class="token-key">token_type</span>
+          <span class="token-val">${stored.token_type}</span>
+        </div>
+        <div class="token-row">
+          <span class="token-key">expires_in</span>
+          <span class="token-val">${stored.expires_in}s</span>
+        </div>
+        <div class="token-row">
+          <span class="token-key">dpop_jwk (thumbprint)</span>
+          <span class="token-val">${stored.dpop_jwk?.x?.slice(0,16)}… (EC P-256)</span>
+        </div>
+        <div class="token-row">
+          <span class="token-key">stored_at</span>
+          <span class="token-val">${stored.stored_at}</span>
+        </div>
+      </div>
+      <button class="btn btn-secondary" onclick="logout()">Sign out</button>
+    </div>
+  `;
+    }
+
+    /* ═══════════════════════════════════════════════
+       INIT
+    ═══════════════════════════════════════════════ */
+    (async function init() {
+        const params = new URLSearchParams(window.location.search);
+        const code   = params.get('code');
+        const state  = params.get('state');
+        const error  = params.get('error');
+
+        if (error) {
+            renderLogin();
+            setStatus(`Auth error: ${error} — ${params.get('error_description') || ''}`, 'error');
+            return;
+        }
+
+        if (code && state) {
+            renderLogin();
+            await handleCallback(code, state);
+            return;
+        }
+
+        // Check existing session
+        const raw = localStorage.getItem('auth_tokens');
+        if (raw) {
+            try {
+                const stored = JSON.parse(raw);
+                if (stored.access_token) { renderHello(stored); return; }
+            } catch(e) { localStorage.removeItem('auth_tokens'); }
+        }
+
+        renderLogin();
+    })();
+
+    /* ═══════════════════════════════════════════════
+   DPoP-BOUND API CALLER
+═══════════════════════════════════════════════ */
+    async function dpopFetch(url, options = {}) {
+        // 1. Load tokens from localStorage
+        const stored = JSON.parse(localStorage.getItem('auth_tokens'));
+        if (!stored?.access_token) throw new Error('Not authenticated');
+
+        // 2. Generate fresh DPoP proof for THIS request
+        const method = (options.method || 'GET').toUpperCase();
+        const dpopProof = await createDpopProof(method, url);  // already in your code
+
+        // 3. Build headers
+        const headers = {
+            ...options.headers,
+            'Authorization': `DPoP ${stored.access_token}`,
+            'DPoP': dpopProof,
+            'Content-Type': 'application/json',
+        };
+
+        // 4. Fire the request
+        const resp = await fetch(url, { ...options, method, headers });
+
+        if (resp.status === 401) throw new Error('Unauthorized — token expired or invalid');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+
+        return resp.json();
+    }
+    async function getAccount() {
+        const RESOURCE_SERVER = 'http://localhost:8080';  // your resource server
+
+        try {
+            setStatus('<span class="spinner"></span>Calling getAccount…', 'info');
+
+            const data = await dpopFetch(`${RESOURCE_SERVER}/api/account`, {
+                method: 'GET',
+            });
+
+            console.log('Account data:', data);
+            showApiResult(data);
+            setStatus('✓ getAccount success', 'info');
+
+        } catch (err) {
+            setStatus(`Error: ${err.message}`, 'error');
+        }
+    }
+    /*
+    What goes over the wire
+    GET /api/account HTTP/1.1
+    Host: localhost:8080
+
+    Authorization: DPoP eyJhbGciOiJFUzI1NiJ9...   ← your access token
+    DPoP: eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6...     ← fresh proof (new every call)
+    Content-Type: application/json
+
+    Proof payload locked to:
+      htm = "GET"
+      htu = "http://localhost:8080/api/account"
+      iat = <now>
+      jti = <unique, never reused>
+     */
+</script>
+</body>
+</html>
