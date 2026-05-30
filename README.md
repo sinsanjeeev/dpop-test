@@ -2,7 +2,7 @@
 
 ![Alt Text](doc/misc-dpop-pkce.png)
 
-# DPOP validation by Spring boot as resource server Check out the [Resource Server](https://github.com](https://github.com/sinsanjeeev/dpop-resource-server) repository. 
+# DPOP validation by Spring boot as resource server Check out the [Resource Server](https://github.com/sinsanjeeev/dpop-resource-server) repository. 
 
 ![Alt Text](doc/dpop-spring-boot-verification.png)
 
