@@ -29,3 +29,4 @@ From JWT 1: extract cnf.jkt (the thumbprint Keycloak embedded at login time)
 From JWT 2: compute SHA-256(proof.jwk) — the thumbprint of the key that just signed the proof
 They must match exactly — this proves the same browser that obtained the token is making this request
 ```
+![Alt Text](doc/process.png)
