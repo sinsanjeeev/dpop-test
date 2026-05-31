@@ -340,11 +340,11 @@
        CONFIG
     ═══════════════════════════════════════════════ */
     const CONFIG = {
-        issuer:               'http://localhost:7000/realms/dpop-test',
-        authorization_endpoint: 'http://localhost:7000/realms/dpop-test/protocol/openid-connect/auth',
-        token_endpoint:       'http://localhost:7000/realms/dpop-test/protocol/openid-connect/token',
-        userinfo_endpoint:    'http://localhost:7000/realms/dpop-test/protocol/openid-connect/userinfo',
-        end_session_endpoint: 'http://localhost:7000/realms/dpop-test/protocol/openid-connect/logout',
+        issuer:               'http://localhost:7001/realms/dpop-test',
+        authorization_endpoint: 'http://localhost:7001/realms/dpop-test/protocol/openid-connect/auth',
+        token_endpoint:       'http://localhost:7001/realms/dpop-test/protocol/openid-connect/token',
+        userinfo_endpoint:    'http://localhost:7001/realms/dpop-test/protocol/openid-connect/userinfo',
+        end_session_endpoint: 'http://localhost:7001/realms/dpop-test/protocol/openid-connect/logout',
         client_id:            'dpop-client',   // ← change to your Keycloak client ID
         redirect_uri:         'http://localhost:5005',
         scope:                'openid profile email',
@@ -377,12 +377,12 @@
     async function getDpopKeyPair() {
         if (_dpopKeyPair) return _dpopKeyPair;
 
-        // Restore from sessionStorage if possible
-        const stored = sessionStorage.getItem('dpop_jwk_private');
+        // Restore from localStorage if possible
+        const stored = localStorage.getItem('dpop_jwk_private');
         if (stored) {
             try {
                 const jwkPriv = JSON.parse(stored);
-                const jwkPub  = JSON.parse(sessionStorage.getItem('dpop_jwk_public'));
+                const jwkPub  = JSON.parse(localStorage.getItem('dpop_jwk_public'));
                 const privateKey = await crypto.subtle.importKey(
                     'jwk', jwkPriv, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']
                 );
@@ -402,8 +402,8 @@
         const jwkPub  = await crypto.subtle.exportKey('jwk', pair.publicKey);
         const jwkPriv = await crypto.subtle.exportKey('jwk', pair.privateKey);
 
-        sessionStorage.setItem('dpop_jwk_public',  JSON.stringify(jwkPub));
-        sessionStorage.setItem('dpop_jwk_private', JSON.stringify(jwkPriv));
+        localStorage.setItem('dpop_jwk_public',  JSON.stringify(jwkPub));
+        localStorage.setItem('dpop_jwk_private', JSON.stringify(jwkPriv));
 
         _dpopKeyPair = { privateKey: pair.privateKey, publicKey: pair.publicKey, jwkPub };
         return _dpopKeyPair;
@@ -421,7 +421,21 @@
         };
         /*
         For resource server requests, RFC 9449 requires:
-
+        Spring Security 6.5 does have built-in DPoP support via DPoPAuthenticationProvider —
+        it is auto-configured when it detects a DPoP token. And it is requiring ath in the proof.
+        JwtAuthenticationProvider    → Authenticated token ✅  (access token valid)
+        DPoPAuthenticationProvider   → FAILED: ath claim is required ❌
+        What Spring Security 6.5 DPoPAuthenticationProvider checks
+        Now that you know it is active, here is exactly what it validates:
+        ✅ typ = dpop+jwt
+        ✅ alg = ES256
+        ✅ proof signature via embedded jwk
+        ✅ htm matches request method
+        ✅ htu matches request URL
+        ✅ iat within allowed window
+        ✅ jti present
+        ✅ cnf.jkt == SHA256(proof.jwk)
+        ✅ ath == SHA256(raw_access_token)   ← this is the one failing
         {
           "jti": "...",
           "htm": "GET",
@@ -561,14 +575,14 @@
         setStatus('Generating PKCE…', 'info');
         console.log("PAGE LOAD");
         console.log("Current URL:", window.location.href);
-        console.log("oauth_state:", sessionStorage.getItem("oauth_state"));
-        console.log("pkce_verifier:", sessionStorage.getItem("pkce_verifier"));
+        console.log("oauth_state:", localStorage.getItem("oauth_state"));
+        console.log("pkce_verifier:", localStorage.getItem("pkce_verifier"));
         const { verifier, challenge } = await generatePKCE();
         const state = randomState();
         await getDpopKeyPair(); // pre-generate key
 
-        sessionStorage.setItem('pkce_verifier', verifier);
-        sessionStorage.setItem('oauth_state',   state);
+        localStorage.setItem('pkce_verifier', verifier);
+        localStorage.setItem('oauth_state',   state);
 
         const params = new URLSearchParams({
             response_type:         'code',
@@ -582,17 +596,17 @@
         console.log("Saving state:", state);
         console.log("Saving verifier:", verifier);
 
-        sessionStorage.setItem('oauth_state', state);
-        sessionStorage.setItem('pkce_verifier', verifier);
+        localStorage.setItem('oauth_state', state);
+        localStorage.setItem('pkce_verifier', verifier);
 
         console.log(
             "After save state:",
-            sessionStorage.getItem('oauth_state')
+            localStorage.getItem('oauth_state')
         );
 
         console.log(
             "After save verifier:",
-            sessionStorage.getItem('pkce_verifier')
+            localStorage.getItem('pkce_verifier')
         );
         window.location.href = `${CONFIG.authorization_endpoint}?${params}`;
     }
@@ -600,8 +614,8 @@
     async function handleCallback(code, returnedState) {
         setStatus('<span class="spinner"></span>Exchanging code…', 'info');
 
-        const storedState   = sessionStorage.getItem('oauth_state');
-        const codeVerifier  = sessionStorage.getItem('pkce_verifier');
+        const storedState   = localStorage.getItem('oauth_state');
+        const codeVerifier  = localStorage.getItem('pkce_verifier');
         console.log("===== CALLBACK DEBUG =====");
         console.log("storedState =", storedState);
         console.log("returnedState =", returnedState);
@@ -668,15 +682,43 @@
 
         // Clean URL
         history.replaceState({}, '', '/');
-        sessionStorage.removeItem('pkce_verifier');
-        sessionStorage.removeItem('oauth_state');
+        /*
+        The log tells us exactly what is wrong:
+        jkt claim is invalid
+        This means the cnf.jkt in the new access token does not match the thumbprint of the public key in the DPoP proof.
+
+        Why this happens after token refresh
+        When you refresh the token, you send a new DPoP proof to Keycloak's /token endpoint.
+        Keycloak embeds the public key thumbprint from that proof into the new access token's cnf.jkt.
+        Original login:
+  DPoP keypair A generated
+  proof signed with key A → Keycloak issues token with cnf.jkt = SHA256(keyA)
+
+Token refresh:
+  getDpopKeyPair() called
+  IF key was lost (page refresh / localStorage cleared)
+  → NEW keypair B generated
+  → proof signed with key B → Keycloak issues NEW token with cnf.jkt = SHA256(keyB)
+
+API call after refresh:
+  getDpopKeyPair() called again
+  IF localStorage cleared again or key regenerated
+  → proof signed with key C
+  → Spring Security: cnf.jkt = SHA256(keyB) ≠ SHA256(keyC) → INVALID ❌
+  Fix — clear DPoP key ONLY on logout
+The key must be cleared together with the tokens, never independently:
+         */
+        //localStorage.removeItem('pkce_verifier');
+        //localStorage.removeItem('oauth_state');
 
         renderHello(stored);
     }
 
     function logout() {
         localStorage.removeItem('auth_tokens');
-        sessionStorage.clear();
+        localStorage.removeItem('dpop_jwk_private');  // ← localStorage
+        localStorage.removeItem('dpop_jwk_public');   // ← localStorage
+        _dpopKeyPair = null;
         const params = new URLSearchParams({
             client_id:    CONFIG.client_id,
             post_logout_redirect_uri: CONFIG.redirect_uri,
@@ -715,7 +757,7 @@
       </div>
       <div class="spec-item">
         <div class="spec-label">IdP Port</div>
-        <div class="spec-value">:7000</div>
+        <div class="spec-value">:7001</div>
       </div>
       <div class="spec-item">
         <div class="spec-label">App Port</div>
@@ -819,7 +861,7 @@
 
         // Fresh DPoP proof for the token endpoint
         const dpopProof = await createDpopProof('POST',
-            'http://localhost:7000/realms/dpop-test/protocol/openid-connect/token');
+            'http://localhost:7001/realms/dpop-test/protocol/openid-connect/token');
 
         const body = new URLSearchParams({
             grant_type:    'refresh_token',
@@ -828,7 +870,7 @@
         });
 
         const resp = await fetch(
-            'http://localhost:7000/realms/dpop-test/protocol/openid-connect/token',
+            'http://localhost:7001/realms/dpop-test/protocol/openid-connect/token',
             {
                 method: 'POST',
                 headers: {
